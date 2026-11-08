@@ -3,3 +3,19 @@
 .home-tools{display:flex;align-items:center;gap:12px}.tool{display:grid;place-items:center;min-width:44px;min-height:44px;border:0;border-radius:9px;color:var(--mut);background:transparent;cursor:pointer}.tool:hover{background:#8882}.tool svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}.tool:focus-visible{outline:2px solid var(--accent)}
 html[data-theme="day"]{color-scheme:light;--fg:#202a36;--mut:#566477;--line:#17263822}
 html[data-theme="day"] body{background:#edf0f4}html[data-theme="day"] header,html[data-theme="day"] .chapter,html[data-theme="day"] #searchResults{background:#fff}html[data-theme="day"] .find input,html[data-theme="day"] .open-links a{background:#f8f9fb;color:var(--fg);border-color:var(--line)}html[data-theme="day"] .resume,html[data-theme="day"] .result small{color:#9f1722}html[data-theme="day"] .find label,html[data-theme="day"] .detail p,html[data-theme="day"] .section-title span,html[data-theme="day"] footer{color:var(--mut)}html[data-theme="day"] .mark{color:#fff}
+
+
+/* ---------- 配套教材 ---------- */
+.textbook{margin-top:34px}
+.book-card{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:14px;
+  padding:18px 20px;border:1px solid var(--line);border-radius:14px;background:#15181d}
+html[data-theme="day"] .book-card{background:#fff}
+.book-card strong{display:block;font-size:15px;letter-spacing:.2px}
+.book-card p{margin:5px 0 0;font-size:12.5px;color:var(--mut)}
+.bc-links{display:flex;gap:8px;flex-wrap:wrap}
+.bc-links a{padding:8px 15px;border-radius:9px;font-size:13px;text-decoration:none;
+  border:1px solid var(--line);color:var(--fg);transition:opacity .15s,background .15s}
+.bc-links a:hover{background:#8882}
+html[data-theme="day"] .bc-links a:hover{background:#1726380d}
+.bc-links a.bc-open{background:var(--accent);border-color:transparent;color:#fff}
+.bc-links a.bc-open:hover{opacity:.9}
