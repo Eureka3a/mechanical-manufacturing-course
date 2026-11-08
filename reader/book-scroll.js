@@ -70,22 +70,29 @@ class BookScrollController {
     const now = performance.now();
     const last = this.samples.at(-1), first = this.samples[0];
     if (!last || !first || now-last.time>80 || last.time-first.time<12) return;
-    let vx = Math.max(-3,Math.min(3,(last.x-first.x)/(last.time-first.time)));
-    let vy = Math.max(-3,Math.min(3,(last.y-first.y)/(last.time-first.time)));
-    if (Math.hypot(vx,vy)<.25) return;
+    const measuredX = (last.x-first.x)/(last.time-first.time);
+    const measuredY = (last.y-first.y)/(last.time-first.time);
+    const speed = Math.hypot(measuredX,measuredY);
+    if (speed<.25) return;
+    // Keep precise drags unchanged; only a clear flick gains extra momentum.
+    const flick = Math.min(1,Math.max(0,(speed-.8)/1.5));
+    const boost = 1 + .6*flick;
+    const decayTime = 230 + 190*flick;
+    let vx = Math.max(-7,Math.min(7,measuredX*boost));
+    let vy = Math.max(-7,Math.min(7,measuredY*boost));
     const started = now;
     let previous = now;
     this.scroll.dataset.motion = 'inertia';
     const tick = time => {
       const dt = Math.min(64,time-previous);
       previous = time;
-      const decay = Math.exp(-dt/230);
+      const decay = Math.exp(-dt/decayTime);
       const x = this.scroll.scrollLeft, y = this.scroll.scrollTop;
-      this.scroll.scrollLeft = x + vx*230*(1-decay);
-      this.scroll.scrollTop = y + vy*230*(1-decay);
+      this.scroll.scrollLeft = x + vx*decayTime*(1-decay);
+      this.scroll.scrollTop = y + vy*decayTime*(1-decay);
       vx = Math.abs(this.scroll.scrollLeft-x)<.1 ? 0 : vx*decay;
       vy = Math.abs(this.scroll.scrollTop-y)<.1 ? 0 : vy*decay;
-      if (time-started>1400 || Math.hypot(vx,vy)<.035) { this.stop(); return; }
+      if (time-started>2200 || Math.hypot(vx,vy)<.035) { this.stop(); return; }
       this.frame = requestAnimationFrame(tick);
     };
     this.frame = requestAnimationFrame(tick);
