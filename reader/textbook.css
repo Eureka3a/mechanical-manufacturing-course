@@ -48,7 +48,7 @@ html[data-theme="day"] #btnBook.on{color:#9f1722}
   transition:background .15s;
 }
 #stageWrap.split.v #splitter{cursor:row-resize}
-#splitter::before{content:"";position:absolute;inset:0 -5px;z-index:1}
+#splitter::before{content:"";position:absolute;inset:0;z-index:1}
 #splitter:hover,#splitter.dragging{background:rgba(208,32,42,.45)}
 #btnSwap{
   width:22px;height:22px;border-radius:50%;z-index:2;
@@ -170,8 +170,8 @@ body.notes-open #stageWrap.has-book .pager{--shift:0px}
 
 /* Reader improvements: scoped gestures. */
 .book-page{width:var(--book-page-width,100%)}
-.book-scroll{touch-action:pan-x pan-y}
-.book-pages-wrap{touch-action:pan-x pan-y}
+.book-scroll{touch-action:none}
+.book-pages-wrap{touch-action:none}
 .book-only #bar{justify-content:flex-start}
 @media(max-width:420px){.book-title{max-width:80px}.book-dl{padding:0 5px}.book-pages input{width:34px}.book-tools{gap:0}}
 

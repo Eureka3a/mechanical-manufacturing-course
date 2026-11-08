@@ -4,4 +4,75 @@
   try{const last=JSON.parse(localStorage.getItem('mechanical-course:last'));const deck=C.decks.find(d=>d.slug===last?.slug);if(deck&&Number.isInteger(last.page)&&last.page>=1&&last.page<=deck.pages){$('resume').hidden=false;$('resume').href=deck.slug+'/index.html#'+last.page;$('resume').textContent='继续阅读 · '+deck.title+' · 第 '+last.page+' 页 →';}}catch{}
   let timer;function search(){const q=$('courseSearch').value.trim().toLocaleLowerCase();const box=$('searchResults');box.replaceChildren();box.hidden=!q;if(!q)return;let count=0;for(const deck of C.decks){for(const page of deck.slides){const text=page.title+'\n'+page.text;const index=text.toLocaleLowerCase().indexOf(q);if(index<0)continue;count++;if(count>60)continue;const a=document.createElement('a');a.className='result';a.href=deck.slug+'/index.html#'+page.n;const meta=document.createElement('small');meta.textContent=deck.title+' / 第 '+page.n+' 页';const title=document.createElement('strong');title.textContent=page.title;const excerpt=document.createElement('p');excerpt.textContent=text.slice(Math.max(0,index-24),index+q.length+90).replace(/\n/g,' ');a.append(meta,title,excerpt);box.append(a);}}const summary=document.createElement('p');summary.className='empty';summary.textContent=count?`找到 ${count} 页${count>60?'，显示前 60 页':''}`:'未找到匹配页面';box.prepend(summary);}
   $('courseSearch').addEventListener('input',()=>{clearTimeout(timer);timer=setTimeout(search,100);});
+
+  /* ---------------- 清理缓存 ---------------- */
+  const EPOCH_KEY='mm:cacheEpoch';
+  const BOOK_DB='mechanical-course-textbook:'+location.origin;
+  const btnClear=$('btnClearCache');
+  let toastEl=null,toastTimer=0;
+
+  function toast(text){
+    if(!toastEl){toastEl=document.createElement('div');toastEl.className='cache-toast';toastEl.setAttribute('role','status');document.body.append(toastEl);}
+    toastEl.textContent=text;toastEl.classList.add('show');
+    clearTimeout(toastTimer);toastTimer=setTimeout(()=>toastEl.classList.remove('show'),5200);
+  }
+
+  function askWorker(message){
+    return new Promise(resolve=>{
+      if(!('serviceWorker' in navigator))return resolve({ok:false,reason:'no-sw'});
+      const timer=setTimeout(()=>resolve({ok:false,reason:'timeout'}),3000);
+      navigator.serviceWorker.ready.then(reg=>{
+        const target=reg.active||navigator.serviceWorker.controller;
+        if(!target){clearTimeout(timer);return resolve({ok:false,reason:'no-sw'});}
+        const channel=new MessageChannel();
+        channel.port1.onmessage=event=>{clearTimeout(timer);resolve(event.data||{ok:false,reason:'empty'});};
+        target.postMessage(message,[channel.port2]);
+      }).catch(()=>{clearTimeout(timer);resolve({ok:false,reason:'no-sw'});});
+    });
+  }
+
+  async function clearTextbook(){
+    let exists=true;
+    try{
+      if(indexedDB.databases){const list=await indexedDB.databases();exists=list.some(db=>db.name===BOOK_DB);}
+    }catch{}
+    if(!exists)return {ok:true,existed:false};
+    return new Promise(resolve=>{
+      let req;
+      try { req=indexedDB.deleteDatabase(BOOK_DB); }
+      catch { resolve({ok:false,existed:true,reason:'error'}); return; }
+      req.onsuccess=()=>resolve({ok:true,existed:true});
+      req.onerror=()=>resolve({ok:false,existed:true,reason:'error'});
+      req.onblocked=()=>resolve({ok:false,existed:true,reason:'blocked'});
+    });
+  }
+
+  async function clearAll(){
+    if(btnClear.disabled)return;
+    if(!window.confirm('清理后，下次阅读需要重新下载。阅读进度和设置会保留。'))return;
+    btnClear.classList.add('busy');btnClear.setAttribute('aria-busy','true');
+    btnClear.disabled=true;
+    toast('正在清理…');
+    let epoch=Date.now();
+    try{epoch=Math.max(epoch,(parseInt(localStorage.getItem(EPOCH_KEY),10)||0)+1);localStorage.setItem(EPOCH_KEY,String(epoch));}catch{}
+    // 先通知其它标签页释放数据库连接，再删库
+    try{const channel=new BroadcastChannel('mm-cache');channel.postMessage({type:'cleared',epoch});channel.close();}catch{}
+    await new Promise(resolve=>setTimeout(resolve,180));
+
+    const worker=await askWorker({type:'clear-cache',epoch});
+    const book=await clearTextbook();
+    btnClear.classList.remove('busy');btnClear.removeAttribute('aria-busy');
+    btnClear.disabled=false;
+
+    const done=[],failed=[];
+    if(worker.ok)done.push('课件缓存 '+worker.removed+' 项');else failed.push('课件缓存（'+(worker.reason==='no-sw'?'页面尚未受 Service Worker 控制':worker.reason==='timeout'?'响应超时':'写入失败')+'）');
+    if(book.ok)done.push(book.existed?'教材缓存':'教材缓存（本来就是空的）');
+    else failed.push('教材缓存（'+(book.reason==='blocked'?'还有标签页正在阅读教材，请关闭后重试':'删除失败')+'）');
+
+    if(!failed.length)toast('已清理：'+done.join('、')+'。阅读进度和设置已保留。');
+    else if(done.length)toast('部分清理失败：'+failed.join('、')+'。已清理：'+done.join('、')+'。');
+    else toast('清理失败：'+failed.join('、')+'。可以刷新页面后重试。');
+  }
+
+  btnClear.addEventListener('click',clearAll);
 })();

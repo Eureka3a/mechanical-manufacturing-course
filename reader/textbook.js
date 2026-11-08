@@ -6,6 +6,8 @@
   if (!ME) return;
   const SITE = new URL('../', ME.src);
   const PDF_REVISION = 'c3f3213c173762a5';
+  const PDF_BYTES = 11230584;            // 构建时注入：PDF 字节数
+  const PDF_SHA256 = 'c3f3213c173762a516339dd9869238644976135f3a085956bfc03c71a946fab1';          // 构建时注入：PDF 完整 SHA-256
   const pdfURL = new URL('assets/textbook/mechanical-manufacturing-basics.pdf', SITE);
   pdfURL.searchParams.set('v',PDF_REVISION);
   const PDF_URL = pdfURL.href;
@@ -22,6 +24,148 @@
   };
   const read = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch { return d; } };
   const write = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+
+  /* ---------------- 教材离线缓存 ----------------
+     独立数据库：不和课件的 50 MiB 图片预算互相挤占，只保留当前版本 +
+     上一个版本（最多约 22 MiB）。写入前校验字节数与整本 SHA-256。 */
+  const CACHE_DB = 'mechanical-course-textbook:' + location.origin;
+  const CACHE_STORE = 'pdf';
+  const CACHE_MAX = 2;
+  const EPOCH_KEY = 'mm:cacheEpoch';
+  const CLEAR_CHANNEL = 'mm-cache';
+  let cacheEpoch = (() => { try { return parseInt(localStorage.getItem(EPOCH_KEY), 10) || 0; } catch { return 0; } })();
+  let cacheAllowed = true;
+
+  function canCache(epoch) {
+    let stored = cacheEpoch;
+    try { stored = Number(localStorage.getItem(EPOCH_KEY)) || 0; } catch {}
+    return cacheAllowed && epoch === cacheEpoch && epoch === stored;
+  }
+
+  const sha256hex = async (buffer) => {
+    const digest = await crypto.subtle.digest('SHA-256', buffer);
+    return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+  };
+
+  const tbCache = (() => {
+    let opening = null;
+    let db = null;
+    function open() {
+      if (!opening) {
+        const at = cacheEpoch;
+        opening = new Promise((resolve, reject) => {
+          const req = indexedDB.open(CACHE_DB, 1);
+          req.onupgradeneeded = () => req.result.createObjectStore(CACHE_STORE, { keyPath: 'rev' });
+          req.onerror = req.onblocked = () => reject(req.error || new Error('storage unavailable'));
+          req.onsuccess = () => {
+            if (!canCache(at)) {
+              req.result.close();
+              reject(new Error('Cache session cleared'));
+              return;
+            }
+            db = req.result;
+            db.onversionchange = () => { db.close(); db = null; opening = null; };
+            resolve(db);
+          };
+        }).catch((error) => { opening = null; throw error; });
+      }
+      return opening;
+    }
+    function tx(mode, run) {
+      return open().then((database) => new Promise((resolve, reject) => {
+        const t = database.transaction(CACHE_STORE, mode);
+        const store = t.objectStore(CACHE_STORE);
+        let value;
+        let failure;
+        t.oncomplete = () => resolve(value);
+        t.onabort = t.onerror = () => reject(failure || t.error || new Error('transaction aborted'));
+        const fail = error => { failure = error; t.abort(); };
+        try { run(store, (v) => { value = v; }, fail); } catch (error) { fail(error); }
+      }));
+    }
+    return {
+      async get(rev) {
+        return tx('readwrite', (s, done, fail) => {
+          const r = s.get(rev);
+          r.onsuccess = () => {
+            const row = r.result;
+            try { if (row) s.put({...row,used:Date.now()}); } catch (error) { fail(error); return; }
+            done(row || null);
+          };
+        });
+      },
+      async put(rev, buffer, sha, at) {
+        return tx('readwrite', (s, done, fail) => {
+          if (!canCache(at)) { done(false); return; }
+          const r = s.getAll();
+          r.onsuccess = () => {
+            if (!canCache(at)) { done(false); return; }
+            const rows = r.result || [];
+            const keep = rows.filter(row => row.rev !== rev)
+              .sort((a,b) => (b.used || 0) - (a.used || 0)).slice(0,CACHE_MAX-1);
+            try {
+              rows.filter(row => !keep.includes(row)).forEach(row => s.delete(row.rev));
+              s.put({rev,bytes:buffer,size:buffer.byteLength,sha,storedAt:Date.now(),used:Date.now()});
+            } catch (error) { fail(error); return; }
+            done(true);
+          };
+        });
+      },
+      async clear() {
+        await tx('readwrite', (s, done) => { s.clear(); done(null); });
+      },
+      close() {
+        try { if (db) db.close(); } catch {}
+        db = null;
+        opening = null;
+      },
+    };
+  })();
+
+  function forgetCache(epoch) {
+    cacheEpoch = Math.max(cacheEpoch, Number(epoch) || 0);
+    cacheAllowed = false;      // 清理前就在读的会话不再自动补缓存
+    window.__textbookCache = {state:'paused',rev:PDF_REVISION};
+    tbCache.close();           // 放开连接，避免清理方删库时被阻塞
+  }
+  if ('BroadcastChannel' in window) {
+    try {
+      new BroadcastChannel(CLEAR_CHANNEL).addEventListener('message', (event) => {
+        if (event.data && event.data.type === 'cleared') forgetCache(event.data.epoch);
+      });
+    } catch {}
+  }
+  window.addEventListener('storage', (event) => {
+    if (event.key === EPOCH_KEY) forgetCache(event.newValue);
+  });
+
+  /* 复用 PDF.js 已经下载到内存的完整数据，不额外发起整本请求 */
+  function cacheWholePdf(proxy, epochAtStart) {
+    const run = async () => {
+      try {
+        if (!canCache(epochAtStart) || !PDF_BYTES) return;
+        window.__textbookCache = { state: 'saving', rev: PDF_REVISION };
+        if (navigator.storage && navigator.storage.persist) {
+          try { await navigator.storage.persist(); } catch {}
+        }
+        const bytes = await proxy.getData();
+        if (!bytes || bytes.byteLength !== PDF_BYTES) throw new Error('size mismatch');
+        if (!canCache(epochAtStart)) return;
+        const copy = bytes.slice();
+        const sha = await sha256hex(copy.buffer);
+        if (sha !== PDF_SHA256) throw new Error('checksum mismatch');
+        if (!canCache(epochAtStart)) return;
+        const saved = await tbCache.put(PDF_REVISION, copy.buffer, sha, epochAtStart);
+        if (!saved || !canCache(epochAtStart)) return;
+        window.__textbookCache = { state: 'saved', rev: PDF_REVISION, bytes: copy.byteLength };
+      } catch (error) {
+        if (!canCache(epochAtStart)) return;
+        window.__textbookCache = { state: 'failed', error: String((error && error.message) || error) };
+      }
+    };
+    const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 1200));
+    idle(run, { timeout: 4000 });
+  }
 
   /* ---------------- DOM ---------------- */
   const paneSlides = document.createElement('section');
@@ -124,12 +268,25 @@
   }
 
   /* ---------------- 拖动 ---------------- */
+  let stopDivider = null;
+  let multiTouch = false;
+  host.addEventListener('touchstart', event => {
+    if (event.touches.length < 2) return;
+    multiTouch = true;
+    stopDivider?.(true);
+  }, {capture:true,passive:true});
+  host.addEventListener('touchend', event => {
+    if (!event.touches.length) multiTouch = false;
+  }, {capture:true,passive:true});
+  host.addEventListener('touchcancel', () => { multiTouch=false; stopDivider?.(true); }, {capture:true,passive:true});
   splitter.addEventListener('pointerdown', (e) => {
+    if (!e.isPrimary || multiTouch) return;
     if (e.target.closest('#btnSwap')) return;
     e.preventDefault();
     splitter.setPointerCapture(e.pointerId);
     splitter.classList.add('dragging');
     const vertical = host.classList.contains('v');
+    const originalRatio = ratio;
 
     const move = (ev) => {
       const r = host.getBoundingClientRect();
@@ -140,15 +297,27 @@
       book.rescale();
       refit();
     };
-    const up = () => {
+    const up = (cancelled = false) => {
+      cancelled = cancelled === true;
       splitter.classList.remove('dragging');
       splitter.removeEventListener('pointermove', move);
       splitter.removeEventListener('pointerup', up);
       splitter.removeEventListener('pointercancel', up);
+      stopDivider = null;
+      if (splitter.hasPointerCapture(e.pointerId)) splitter.releasePointerCapture(e.pointerId);
+      if (cancelled) {
+        ratio = originalRatio;
+        host.style.setProperty('--split-ratio',ratio/100);
+        host.style.setProperty('--split-a',ratio+'%');
+        book.rescale();
+        refit();
+        return;
+      }
       ratios[vertical ? 'v' : 'h'] = ratio;
       write(LS.split, JSON.stringify(ratios));
       book.relayout();
     };
+    stopDivider = up;
     splitter.addEventListener('pointermove', move);
     splitter.addEventListener('pointerup', up);
     splitter.addEventListener('pointercancel', up);
@@ -236,7 +405,18 @@
         if (!window.pdfjsLib) throw new Error('pdf.js 不可用');
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.js';
 
-        const task = window.pdfjsLib.getDocument({url:PDF_URL});
+        const cached = cacheAllowed ? await tbCache.get(PDF_REVISION).catch(() => null) : null;
+        let offline = null;
+        if (cached && cached.bytes && cached.size === PDF_BYTES &&
+            cached.bytes.byteLength === PDF_BYTES && cached.sha === PDF_SHA256 &&
+            await sha256hex(cached.bytes).catch(() => '') === PDF_SHA256) {
+          offline = new Uint8Array(cached.bytes.slice(0));   // 复制一份，pdf.js 会转移这份数据
+          window.__textbookCache = { state: 'hit', rev: PDF_REVISION, bytes: cached.size };
+        } else {
+          window.__textbookCache = { state: 'miss', rev: PDF_REVISION };
+        }
+
+        const task = window.pdfjsLib.getDocument(offline ? {data:offline} : {url:PDF_URL});
         task.onProgress = (p) => {
           if (p && p.total) {
             const pct = Math.min(100, Math.round(p.loaded / p.total * 100));
@@ -254,6 +434,7 @@
         pane.querySelectorAll('.book-err').forEach(box => box.remove());
         const saved = parseInt(read(LS.page, '1'), 10);
         gotoPage(saved > 0 && saved <= total ? saved : 1, true);
+        if (!offline) cacheWholePdf(pdfDoc, cacheEpoch);
       } catch (err) {
         failed = true;
         showError(err);
@@ -334,6 +515,9 @@
         tasks.set(n,task);
         await task.promise;
         if(version !== revision || !open) { canvas.width=canvas.height=0; return; }
+        box.querySelectorAll('canvas').forEach(previous => {
+          previous.remove(); previous.width=previous.height=0;
+        });
         box.append(canvas);
         box.classList.add('rendered');
         done.set(n, canvas);
@@ -345,6 +529,14 @@
     }
 
     function trim() {
+      // Pixel placeholders retained during pinch are not decoded-cache entries.
+      for (const [n, box] of els) {
+        if (Math.abs(n-current)<=7 || done.has(n)) continue;
+        box.querySelectorAll('canvas').forEach(canvas => {
+          canvas.remove(); canvas.width=canvas.height=0;
+        });
+        box.classList.remove('rendered');
+      }
       if (done.size <= 10) return;
       for (const [n, c] of [...done]) {
         if (Math.abs(n - current) > 7) {
@@ -424,7 +616,7 @@
       if (anchor) restorePosition(anchor);
     }
 
-    function relayout(anchor = position()) {
+    function relayout(anchor = position(), keepPixels = false) {
       if (!total || pinching) return;
       const key = pageWidth() + ':' + scrollEl().clientHeight;
       if (key === lastLayout) return;
@@ -435,9 +627,11 @@
       els.forEach(box => box.dataset.busy = '');
       rescale();
       for (const [n, canvas] of done) {
-        canvas.remove();
-        canvas.width = canvas.height = 0;
-        els.get(n)?.classList.remove('rendered');
+        if (!keepPixels) {
+          canvas.remove();
+          canvas.width = canvas.height = 0;
+          els.get(n)?.classList.remove('rendered');
+        }
       }
       done.clear();
       restorePosition(anchor);
@@ -463,10 +657,30 @@
     }
 
     const scroll = scrollEl();
+    scroll.style.overflowAnchor = 'none';
     let gesture = null;
-    scroll.addEventListener('touchstart', event => {
-      if (event.touches.length < 2 || !total) return;
-      event.preventDefault();
+    let pendingZoom = null;
+    function applyPendingZoom() {
+      if (!pendingZoom) return;
+      const update = pendingZoom;
+      pendingZoom = null;
+      zoom = update.zoom;
+      rescale();
+      const box = els.get(gesture.page);
+      scroll.scrollLeft = gesture.x*zoom-update.centerX;
+      scroll.scrollTop = box.offsetTop+gesture.fraction*box.offsetHeight-update.centerY;
+    }
+    function beginBookGesture(event) {
+      if (!total || !open) return;
+      if (event.touches.length < 2) {
+        if (event.target.closest('#bookScroll') && !gesture) {
+          const finger=event.touches[0];
+          gesture={mode:'pan',x:finger.clientX,y:finger.clientY,left:scroll.scrollLeft,top:scroll.scrollTop};
+        }
+        return;
+      }
+      if (![...event.touches].some(touch=>touch.target.closest('#bookScroll'))) return;
+      if (event.cancelable) event.preventDefault();
       const [a, b] = event.touches;
       const rect = scroll.getBoundingClientRect();
       pinching = true;
@@ -474,40 +688,57 @@
       tasks.forEach(task => task.cancel());
       tasks.clear();
       els.forEach(box => box.dataset.busy = '');
+      const centerY=(a.clientY+b.clientY)/2-rect.top;
+      const anchorY=scroll.scrollTop+centerY;
+      let page=1;
+      for (const [n,box] of els) { if (box.offsetTop>anchorY) break; page=n; }
+      const box=els.get(page);
       gesture = {
+        mode:'pinch', page, fraction:(anchorY-box.offsetTop)/box.offsetHeight,
         distance: Math.max(1, Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY)),
         zoom,
         x: ((a.clientX+b.clientX)/2-rect.left+scroll.scrollLeft)/zoom,
-        y: ((a.clientY+b.clientY)/2-rect.top+scroll.scrollTop)/zoom,
       };
-    }, {passive:false});
-    scroll.addEventListener('touchmove', event => {
-      if (!gesture || event.touches.length < 2) return;
-      event.preventDefault();
+    }
+    host.addEventListener('touchstart', beginBookGesture, {capture:true,passive:false});
+    host.addEventListener('touchmove', event => {
+      if (!gesture) return;
+      if (event.cancelable) event.preventDefault();
+      if (event.touches.length === 1) {
+        applyPendingZoom();
+        const finger=event.touches[0];
+        if (gesture.mode!=='pan') {
+          gesture={mode:'pan',x:finger.clientX,y:finger.clientY,left:scroll.scrollLeft,top:scroll.scrollTop};
+        }
+        scroll.scrollLeft=gesture.left+gesture.x-finger.clientX;
+        scroll.scrollTop=gesture.top+gesture.y-finger.clientY;
+        return;
+      }
+      if (gesture.mode!=='pinch') beginBookGesture(event);
       const [a, b] = event.touches;
       const rect = scroll.getBoundingClientRect();
       const next = Math.min(3.5, Math.max(.7,
         gesture.zoom*Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY)/gesture.distance));
       cancelAnimationFrame(zoomFrame);
-      zoomFrame = requestAnimationFrame(() => {
-        zoom = next;
-        rescale();
-        scroll.scrollLeft = gesture.x*zoom-((a.clientX+b.clientX)/2-rect.left);
-        scroll.scrollTop = gesture.y*zoom-((a.clientY+b.clientY)/2-rect.top);
-      });
+      pendingZoom={zoom:next,centerX:(a.clientX+b.clientX)/2-rect.left,centerY:(a.clientY+b.clientY)/2-rect.top};
+      zoomFrame = requestAnimationFrame(applyPendingZoom);
     }, {passive:false});
     function finishPinch(event) {
-      if (!gesture || event.touches.length >= 2) return;
+      if (!gesture || event.touches.length) return;
       cancelAnimationFrame(zoomFrame);
+      applyPendingZoom();
       gesture = null;
+      const redraw = pinching;
       pinching = false;
       write(LS.zoom,zoom);
       // Canvas pixels are rerendered only after the gesture.
-      lastLayout = '';
-      relayout();
+      if (redraw) {
+        const anchor=position();
+        requestAnimationFrame(()=>{ relayout(anchor,true); onScroll(); });
+      } else onScroll();
     }
-    scroll.addEventListener('touchend', finishPinch);
-    scroll.addEventListener('touchcancel', finishPinch);
+    host.addEventListener('touchend', finishPinch);
+    host.addEventListener('touchcancel', finishPinch);
     el('bookFit').addEventListener('click', () => setZoom(1));
 
     el('bookScroll').addEventListener('scroll', onScroll, { passive: true });

@@ -19,3 +19,14 @@ html[data-theme="day"] .book-card{background:#fff}
 html[data-theme="day"] .bc-links a:hover{background:#1726380d}
 .bc-links a.bc-open{background:var(--accent);border-color:transparent;color:#fff}
 .bc-links a.bc-open:hover{opacity:.9}
+
+/* ---------- 清理缓存 ---------- */
+#btnClearCache{display:flex;align-items:center;gap:6px;font-size:13px}
+#btnClearCache.busy{opacity:.55;pointer-events:none}
+.cache-toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(10px);opacity:0;
+  padding:10px 16px;border-radius:10px;font-size:13px;line-height:1.6;max-width:min(560px,92vw);
+  background:#1c2026;color:#e9ebee;border:1px solid #ffffff1f;box-shadow:0 12px 40px #0007;
+  transition:opacity .2s,transform .2s;z-index:60;pointer-events:none}
+.cache-toast.show{opacity:1;transform:translateX(-50%)}
+html[data-theme="day"] .cache-toast{background:#fff;color:#202a36;border-color:#17263822;box-shadow:0 12px 40px #1726381f}
+@media (max-width:640px){#btnClearCache span{display:none}}
