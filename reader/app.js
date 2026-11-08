@@ -64,6 +64,17 @@
     ovl.append(box);
   }
 
+  let zoom=1, panX=0, panY=0, suppressClick=0;
+  function transform(){
+    const cs=getComputedStyle(wrap);
+    const aw=wrap.clientWidth-parseFloat(cs.paddingLeft)-parseFloat(cs.paddingRight);
+    const ah=wrap.clientHeight-parseFloat(cs.paddingTop)-parseFloat(cs.paddingBottom);
+    const bx=Math.max(0,(stage.offsetWidth*zoom-aw)/2),by=Math.max(0,(stage.offsetHeight*zoom-ah)/2);
+    panX=Math.max(-bx,Math.min(bx,panX));panY=Math.max(-by,Math.min(by,panY));
+    stage.style.transform=`translate(${panX}px,${panY}px) scale(${zoom})`;
+  }
+  function resetView(){zoom=1;panX=panY=0;transform();}
+  $('btnFit').addEventListener('click',resetView);
   /* ---------------- layout ---------------- */
   function fit() {
     const cs = getComputedStyle(wrap);
@@ -72,10 +83,11 @@
     const aspect = D.width / D.height;
     const availW = wrap.clientWidth - padX;
     const availH = wrap.clientHeight - padY;
-    const w = Math.max(200, Math.min(availW, availH * aspect));
+    const w = Math.max(1, Math.min(availW, availH * aspect));
     const h = w / aspect;
     stage.style.width = Math.floor(w) + 'px';
     stage.style.height = Math.floor(h) + 'px';
+    transform();
   }
 
   /* ---------------- rendering ---------------- */
@@ -83,6 +95,7 @@
     i = Math.max(0, Math.min(N - 1, i));
     if (i === cur && !opts.force) return;
     cur = i;
+    resetView();
     const s = S[i];
 
     img.src = s.img;
@@ -277,7 +290,7 @@
   $('pageInput').addEventListener('focus',e=>e.target.select());
 
   stage.addEventListener('click', (e) => {
-    if (document.body.dataset.overlay) return;
+    if (document.body.dataset.overlay || zoom>1.01 || Date.now()<suppressClick) return;
     if(e.target.closest('.media-item'))return;
     const r = stage.getBoundingClientRect();
     const x = (e.clientX - r.left) / r.width;
@@ -378,7 +391,7 @@
   stage.addEventListener(
     'wheel',
     (e) => {
-      if (document.body.dataset.overlay) return;
+      if (document.body.dataset.overlay || zoom>1.01 || e.ctrlKey) return;
       if(e.target.closest('.media-item'))return;
       const now = Date.now();
       if (now - wheelLock < 420) return;
@@ -389,22 +402,44 @@
     { passive: true }
   );
 
-  let tx = 0, ty = 0, tracking = false;
-  stage.addEventListener('touchstart', (e) => {
-    if(e.target.closest('.media-item'))return;
-    if (e.touches.length !== 1) return;
-    tracking = true;
-    tx = e.touches[0].clientX;
-    ty = e.touches[0].clientY;
-  }, { passive: true });
-  stage.addEventListener('touchend', (e) => {
-    if (!tracking) return;
-    tracking = false;
-    const t = e.changedTouches[0];
-    const dx = t.clientX - tx;
-    const dy = t.clientY - ty;
-    if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.4) go(dx < 0 ? 1 : -1);
-  }, { passive: true });
+  let gesture=null;
+  const point=t=>({x:t.clientX,y:t.clientY});
+  function beginPinch(e){
+    const a=point(e.touches[0]),b=point(e.touches[1]),r=stage.getBoundingClientRect();
+    const cx=(a.x+b.x)/2,cy=(a.y+b.y)/2;
+    gesture={mode:'pinch',distance:Math.hypot(a.x-b.x,a.y-b.y),zoom,
+      anchorX:(cx-r.left-r.width/2)/zoom,anchorY:(cy-r.top-r.height/2)/zoom,
+      centerX:r.left+r.width/2-panX,centerY:r.top+r.height/2-panY};
+  }
+  stage.addEventListener('touchstart',e=>{
+    if(document.body.dataset.overlay)return;
+    if(e.touches.length>=2){e.preventDefault();suppressClick=Date.now()+700;beginPinch(e);return;}
+    if(e.target.closest('.media-item') && (zoom<=1.01 || e.target.closest('button') || e.target.closest('.media-item').querySelector('video[controls]'))){gesture=null;return;}
+    const p=point(e.touches[0]);gesture={mode:zoom>1.01?'pan':'swipe',x:p.x,y:p.y,px:panX,py:panY};
+  },{passive:false});
+  stage.addEventListener('touchmove',e=>{
+    if(!gesture)return;
+    e.preventDefault();suppressClick=Date.now()+700;
+    if(e.touches.length>=2){
+      if(gesture.mode!=='pinch')beginPinch(e);
+      const a=point(e.touches[0]),b=point(e.touches[1]);
+      zoom=Math.max(1,Math.min(4,gesture.zoom*Math.hypot(a.x-b.x,a.y-b.y)/Math.max(1,gesture.distance)));
+      panX=(a.x+b.x)/2-gesture.centerX-gesture.anchorX*zoom;
+      panY=(a.y+b.y)/2-gesture.centerY-gesture.anchorY*zoom;transform();
+    }else if(gesture.mode==='pan'){
+      panX=gesture.px+e.touches[0].clientX-gesture.x;panY=gesture.py+e.touches[0].clientY-gesture.y;transform();
+    }
+  },{passive:false});
+  stage.addEventListener('touchend',e=>{
+    if(!gesture)return;
+    const g=gesture;
+    if(e.touches.length){gesture={mode:'blocked'};return;}
+    gesture=null;
+    if(g.mode==='swipe'){
+      const t=e.changedTouches[0],dx=t.clientX-g.x,dy=t.clientY-g.y;
+      if(Math.abs(dx)>45&&Math.abs(dx)>Math.abs(dy)*1.4){suppressClick=Date.now()+700;go(dx<0?1:-1);}
+    }else suppressClick=Date.now()+700;
+  },{passive:true});
 
   window.addEventListener('hashchange', () => {
     const n = parseInt(location.hash.slice(1), 10);
@@ -414,7 +449,7 @@
   window.addEventListener('resize', fit);
   window.addEventListener('pagehide',releaseMedia);
   window.addEventListener('pageshow',e=>{if(e.persisted)render(cur,{force:true});});
-  stage.addEventListener('touchcancel',()=>tracking=false,{passive:true});
+  stage.addEventListener('touchcancel',()=>{gesture=null;suppressClick=Date.now()+700;},{passive:true});
   document.addEventListener('keydown',e=>{
     const id=document.body.dataset.overlay;
     if(e.key!=='Tab'||!id)return;

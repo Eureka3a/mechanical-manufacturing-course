@@ -248,3 +248,29 @@ button:focus-visible,figure:focus-visible{outline:2px solid #ff6a73;outline-offs
 .course-home{text-decoration:none}
 .media-unavailable{display:flex;align-items:flex-end;justify-content:center;background:linear-gradient(transparent 55%,#111b 100%)}
 .media-unavailable span{font-size:clamp(9px,1vw,14px);background:#17191dd9;padding:6px 9px;border:1px solid #9a7d4055;border-radius:5px;color:#ecd7a5;margin:5px;text-align:center}
+
+/* Local 2026-11-09: stable controls and scoped touch viewport. */
+:root{color-scheme:dark}
+#stageWrap{overflow:hidden;padding-bottom:90px}
+#stage{touch-action:none;transform-origin:center;will-change:transform}
+.pager{gap:10px;bottom:calc(12px + env(safe-area-inset-bottom))}
+.pager button{width:44px;height:44px}
+#pageForm{width:100px;flex:0 0 100px}
+#pageInput{width:36px;min-height:44px}
+#pageTotal{width:30px;display:inline-block}
+#gifBadge{position:absolute;bottom:calc(70px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);z-index:20}
+.fit-button{position:absolute;right:max(12px,env(safe-area-inset-right));bottom:calc(18px + env(safe-area-inset-bottom));z-index:20;min-height:44px;border:1px solid var(--line);background:var(--panel)}
+#bar{padding-left:max(10px,env(safe-area-inset-left));padding-right:max(10px,env(safe-area-inset-right));padding-top:env(safe-area-inset-top);flex-basis:calc(58px + env(safe-area-inset-top))}
+.tool,.close{min-height:44px;min-width:44px;justify-content:center}
+@media(max-width:760px){#stageWrap{padding:8px 8px calc(90px + env(safe-area-inset-bottom))}.tools{gap:0}.tool{padding:7px}.brand{gap:5px}.titles{display:none}.fit-button{font-size:11px;padding:7px}.overlay{padding:12px}.drawer{top:calc(58px + env(safe-area-inset-top))}}
+@media(max-width:370px){.fit-button{right:5px;bottom:calc(70px + env(safe-area-inset-bottom))}#gifBadge{left:12px;transform:none}}
+@media(max-height:500px) and (orientation:landscape){#bar{flex-basis:calc(44px + env(safe-area-inset-top))}#stageWrap{padding-top:4px;padding-bottom:calc(68px + env(safe-area-inset-bottom))}#gifBadge{left:12px;bottom:calc(25px + env(safe-area-inset-bottom));transform:none}.drawer{top:44px}}
+html[data-theme="day"]{--bg:#edf0f4;--panel:#fff;--panel-2:#f1f3f7;--line:#17263822;--line-2:#17263844;--fg:#202a36;--mut:#566477;color-scheme:light}
+html[data-theme="day"] body{background:var(--bg)}
+html[data-theme="day"] #bar,html[data-theme="day"] .pager,html[data-theme="day"] .drawer,html[data-theme="day"] #toast{background:#ffffffed}
+html[data-theme="day"] #notesText{color:var(--fg)}
+html[data-theme="day"] .tool:hover,html[data-theme="day"] .close:hover,html[data-theme="day"] .pager button:hover,html[data-theme="day"] .results button:hover{background:#1726380d;color:var(--fg)}
+html[data-theme="day"] .tool.on,html[data-theme="day"] .chip,html[data-theme="day"] .gif-badge,html[data-theme="day"] .notes-gif{color:#9f1722}
+html[data-theme="day"] .results .snip mark{color:#593e00;background:#ffe398}
+html[data-theme="day"] .results .snip b{color:var(--fg)}
+@media print{#stage{transform:none!important}#btnFit,#gifBadge{display:none!important}}
