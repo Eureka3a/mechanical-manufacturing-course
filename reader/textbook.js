@@ -493,7 +493,24 @@
       els.forEach((d) => observer.observe(d));
     }
 
-    async function renderPage(n) {
+    const renderQueue = new Set();
+    let renderRunning = 0;
+    function renderPage(n) {
+      if (!els.has(n) || done.has(n) || els.get(n).dataset.busy==='1') return;
+      renderQueue.add(n);
+      pumpRenders();
+    }
+    function pumpRenders() {
+      if (!open || pinching) return;
+      while (renderRunning<2 && renderQueue.size) {
+        const n=[...renderQueue].sort((a,b)=>Math.abs(a-current)-Math.abs(b-current))[0];
+        renderQueue.delete(n);
+        if (Math.abs(n-current)>3) continue;
+        renderRunning++;
+        paintPage(n).finally(()=>{renderRunning--;pumpRenders();});
+      }
+    }
+    async function paintPage(n) {
       if (!pdfDoc || pinching || done.has(n)) return;
       const box = els.get(n);
       if (!box || box.dataset.busy === '1') return;
@@ -537,9 +554,9 @@
         });
         box.classList.remove('rendered');
       }
-      if (done.size <= 10) return;
+      if (done.size <= 8) return;
       for (const [n, c] of [...done]) {
-        if (Math.abs(n - current) > 7) {
+        if (Math.abs(n - current) > 3) {
           c.remove(); c.width=c.height=0;
           done.delete(n);
           els.get(n)?.classList.remove('rendered');
@@ -548,6 +565,8 @@
     }
 
     function gotoPage(n, instant) {
+      motion.stop();
+      renderQueue.clear();
       n = Math.max(1, Math.min(total || 1, n | 0));
       const box = els.get(n);
       if (!box) return;
@@ -582,8 +601,12 @@
           current = best;
           el('bookPageInput').value = best;
           write(LS.page, best);
+          renderQueue.clear();
+          tasks.forEach((task,n)=>{if(Math.abs(n-current)>3)task.cancel();});
           trim();
+          renderPage(current);renderPage(current+1);
         }
+        motion.update(true);
       });
     }
 
@@ -617,6 +640,8 @@
     }
 
     function relayout(anchor = position(), keepPixels = false) {
+      motion.stop();
+      renderQueue.clear();
       if (!total || pinching) return;
       const key = pageWidth() + ':' + scrollEl().clientHeight;
       if (key === lastLayout) return;
@@ -643,6 +668,8 @@
     }
 
     function suspend() {
+      motion.stop();
+      renderQueue.clear();
       revision++;
       tasks.forEach(task => task.cancel());
       tasks.clear();
@@ -650,6 +677,7 @@
     }
 
     function setZoom(next) {
+      motion.stop();
       const anchor = position();
       zoom = Math.min(3.5, Math.max(0.7, next));
       write(LS.zoom, zoom);
@@ -658,6 +686,7 @@
 
     const scroll = scrollEl();
     scroll.style.overflowAnchor = 'none';
+    const motion = new BookScrollController(scroll,pane,()=> '第 '+current+' / '+total+' 页');
     let gesture = null;
     let pendingZoom = null;
     function applyPendingZoom() {
@@ -672,10 +701,12 @@
     }
     function beginBookGesture(event) {
       if (!total || !open) return;
+      motion.stop();
       if (event.touches.length < 2) {
         if (event.target.closest('#bookScroll') && !gesture) {
           const finger=event.touches[0];
           gesture={mode:'pan',x:finger.clientX,y:finger.clientY,left:scroll.scrollLeft,top:scroll.scrollTop};
+          motion.begin();
         }
         return;
       }
@@ -709,9 +740,11 @@
         const finger=event.touches[0];
         if (gesture.mode!=='pan') {
           gesture={mode:'pan',x:finger.clientX,y:finger.clientY,left:scroll.scrollLeft,top:scroll.scrollTop};
+          motion.begin();
         }
         scroll.scrollLeft=gesture.left+gesture.x-finger.clientX;
         scroll.scrollTop=gesture.top+gesture.y-finger.clientY;
+        motion.sample();
         return;
       }
       if (gesture.mode!=='pinch') beginBookGesture(event);
@@ -735,7 +768,10 @@
       if (redraw) {
         const anchor=position();
         requestAnimationFrame(()=>{ relayout(anchor,true); onScroll(); });
-      } else onScroll();
+      } else {
+        onScroll();
+        if(event.type!=='touchcancel')motion.release();
+      }
     }
     host.addEventListener('touchend', finishPinch);
     host.addEventListener('touchcancel', finishPinch);

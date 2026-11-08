@@ -75,6 +75,7 @@
     const bx=Math.max(0,(stage.offsetWidth*zoom-aw)/2),by=Math.max(0,(stage.offsetHeight*zoom-ah)/2);
     panX=Math.max(-bx,Math.min(bx,panX));panY=Math.max(-by,Math.min(by,panY));
     stage.style.transform=`translate(${panX}px,${panY}px) scale(${zoom})`;
+    $('btnFit').hidden = Math.abs(zoom - 1) < 0.01;
   }
   function resetView(){zoom=1;panX=panY=0;transform();}
   $('btnFit').addEventListener('click',resetView);
@@ -125,6 +126,7 @@
 
     $('pageInput').value = i+1;
     $('pageTotal').textContent=N;
+    $('compactPage').textContent=(i+1)+' / '+N;
     document.title=`${i+1} / ${N} · ${D.chapter||'课件'} · ${D.title}`;
     progress.style.width = `${((i + 1) / N) * 100}%`;
     $('btnPrev').disabled = i === 0;
@@ -335,13 +337,47 @@
   $('pageForm').addEventListener('submit',e=>{e.preventDefault();const n=Number($('pageInput').value);if(!Number.isInteger(n)||n<1||n>N){toast(`请输入 1–${N} 的页码`);$('pageInput').value=cur+1;return;}render(n-1);$('pageInput').blur();});
   $('pageInput').addEventListener('focus',e=>e.target.select());
 
-  stage.addEventListener('click', (e) => {
-    if (document.body.dataset.overlay || zoom>1.01 || Date.now()<suppressClick) return;
-    if(e.target.closest('.media-item'))return;
-    const r = stage.getBoundingClientRect();
-    const x = (e.clientX - r.left) / r.width;
-    if (x < 0.34) go(-1);
-    else go(1);
+  const compactLayout=matchMedia('(max-width:760px), (pointer:coarse) and (max-width:1024px)');
+  function closePageEntry(){
+    $('compactForm').hidden=true;
+    $('compactPage').setAttribute('aria-expanded','false');
+  }
+  $('compactPage').addEventListener('click',()=>{
+    $('compactForm').hidden=!$('compactForm').hidden;
+    $('compactPage').setAttribute('aria-expanded',String(!$('compactForm').hidden));
+    if(!$('compactForm').hidden){$('compactInput').value=cur+1;$('compactInput').focus();$('compactInput').select();}
+  });
+  $('compactClose').addEventListener('click',closePageEntry);
+  $('compactForm').addEventListener('submit',e=>{
+    e.preventDefault();
+    const n=Number($('compactInput').value);
+    if(!Number.isInteger(n)||n<1||n>N){toast('请输入 1–'+N+' 的页码');return;}
+    render(n-1);closePageEntry();$('compactInput').blur();
+  });
+  document.addEventListener('keydown',e=>{if(e.key==='Escape')closePageEntry();});
+  let edgeTimer=0;
+  function edgeTurn(delta){
+    const flash=$(delta<0?'edgePrevious':'edgeNext');
+    $('edgePrevious').classList.remove('visible');$('edgeNext').classList.remove('visible');
+    flash.classList.add('visible');clearTimeout(edgeTimer);
+    edgeTimer=setTimeout(()=>flash.classList.remove('visible'),1000);
+    if((delta<0&&cur===0)||(delta>0&&cur===N-1))toast(delta<0?'已是第一页':'已是最后一页');
+    go(delta);
+  }
+  wrap.addEventListener('click',e=>{
+    if(document.body.dataset.overlay||zoom>1.01||Date.now()<suppressClick)return;
+    if(e.target.closest('.media-item,button,input,form,a,#paneBook,#splitter'))return;
+    const host=stage.parentElement||wrap;
+    if(!host.contains(e.target))return;
+    if(compactLayout.matches){
+      const rect=host.getBoundingClientRect();
+      const x=e.clientX-rect.left,edge=Math.max(44,rect.width*.18);
+      if(x<=edge)edgeTurn(-1);
+      else if(x>=rect.width-edge)edgeTurn(1);
+    }else if(stage.contains(e.target)){
+      const rect=stage.getBoundingClientRect();
+      go((e.clientX-rect.left)/rect.width<.34?-1:1);
+    }
   });
 
   $('btnGrid').addEventListener('click', () => {
@@ -493,6 +529,7 @@
   });
 
   window.addEventListener('resize', fit);
+  compactLayout.addEventListener('change',()=>{closePageEntry();fit();});
   window.addEventListener('pagehide',()=>{buffer.stop(); releaseMedia();});
   window.addEventListener('pageshow',e=>{if(e.persisted)render(cur,{force:true});});
   stage.addEventListener('touchcancel',()=>{gesture=null;suppressClick=Date.now()+700;},{passive:true});

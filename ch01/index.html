@@ -49,7 +49,13 @@
   </div>
   <div id="loadFeedback" hidden><span role="status" id="loadMessage"></span><button id="retryPage" hidden>重新加载本页</button></div>
   <span class="gif-badge" id="gifBadge" hidden></span>
-  <button class="tool fit-button" id="btnFit" title="恢复整页适应" aria-label="恢复整页适应">恢复适应</button>
+  <button class="tool fit-button" id="btnFit" title="恢复整页适应" aria-label="恢复整页适应" hidden>恢复适应</button>
+  <div class="mobile-page">
+    <button id="compactPage" aria-label="输入页码跳转" aria-expanded="false">1 / 32</button>
+    <form id="compactForm" hidden><input id="compactInput" inputmode="numeric" type="text" pattern="[0-9]+" aria-label="跳转页码"><button type="submit">跳转</button><button type="button" id="compactClose" aria-label="关闭页码输入">×</button></form>
+  </div>
+  <span class="edge-feedback previous" id="edgePrevious" aria-hidden="true">‹</span>
+  <span class="edge-feedback next" id="edgeNext" aria-hidden="true">›</span>
   <div class="pager">
 
     <button id="btnPrev" aria-label="上一页"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
@@ -105,6 +111,6 @@
 <script src="assets/deck-data.js"></script>
 <script src="../reader/page-buffer.js"></script>
 <script src="../reader/app.js"></script>
-<script src="../reader/textbook.js"></script>
+<script src="../reader/book-scroll.js"></script><script src="../reader/textbook.js"></script>
 </body>
 </html>
