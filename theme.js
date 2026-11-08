@@ -9,3 +9,11 @@
  document.addEventListener('DOMContentLoaded',()=>{sync();document.getElementById('btnTheme')?.addEventListener('click',()=>{const v=document.documentElement.dataset.theme==='day'?'night':'day';apply(v);try{localStorage.setItem(key,v);}catch{}sync();});});
  window.addEventListener('storage',e=>{if(e.key===key){apply(e.newValue);sync();}});
 })();
+
+// Resolve against this shared root script, including repository subpaths.
+if (location.protocol !== 'file:' && 'serviceWorker' in navigator) {
+  const workerURL = new URL('sw.js', document.currentScript.src);
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register(workerURL, {updateViaCache:'none'}).catch(()=>{});
+  }, {once:true});
+}

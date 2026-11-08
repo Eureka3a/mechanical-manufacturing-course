@@ -274,3 +274,6 @@ html[data-theme="day"] .tool.on,html[data-theme="day"] .chip,html[data-theme="da
 html[data-theme="day"] .results .snip mark{color:#593e00;background:#ffe398}
 html[data-theme="day"] .results .snip b{color:var(--fg)}
 @media print{#stage{transform:none!important}#btnFit,#gifBadge{display:none!important}}
+
+#loadFeedback{position:absolute;z-index:12;top:12px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:8px;padding:6px 12px;border-radius:10px;background:var(--panel);color:var(--fg);border:1px solid var(--line);font-size:12px;white-space:nowrap}
+#retryPage{min-height:40px;border-radius:6px;background:var(--panel-2);color:var(--fg)}

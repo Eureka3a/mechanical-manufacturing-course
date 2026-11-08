@@ -10,7 +10,9 @@
 
   const stage = $('stage');
   const wrap = $('stageWrap');
-  const img = $('slideImg');
+  const buffer = new PageBuffer(S);
+  const feedback = $('loadFeedback');
+  let direction = 1;
   const ovl = $('ovl');
   const caps = $('caps');
   const badge = $('gifBadge');
@@ -94,25 +96,23 @@
   function render(i, opts = {}) {
     i = Math.max(0, Math.min(N - 1, i));
     if (i === cur && !opts.force) return;
+    if (cur >= 0 && i !== cur) direction = Math.sign(i-cur);
     cur = i;
     resetView();
     const s = S[i];
 
-    img.src = s.img;
-    img.alt = s.title ? `第 ${s.n} 页：${s.title}` : `第 ${s.n} 页`;
-
-    generation++;
+    const version = ++generation;
+    const signal = buffer.target(i, direction);
     releaseMedia();
     caps.replaceChildren();
-    for (const m of mediaOf(s)) addMedia(m,generation);
-    for (const c of s.caps || []) {
-      const el = document.createElement('img');
-      el.src = c.src;
-      el.alt = '';
-      el.style.cssText =
-        `left:${c.x}%;top:${c.y}%;width:${c.w}%;height:${c.h}%;object-fit:fill;`;
-      caps.appendChild(el);
-    }
+    const placeholder = new Image();
+    placeholder.id = 'slideImg';
+    placeholder.draggable = false;
+    placeholder.fetchPriority = 'low';
+    placeholder.alt = `第 ${s.n} 页：${s.title}`;
+    if (!buffer.entries.get(i)?.images) placeholder.src = s.thumb;
+    $('slideImg').replaceWith(placeholder);
+    showPage(i, version, signal);
 
     if (mediaOf(s).length) {
       badge.hidden = false;
@@ -138,17 +138,61 @@
     try {localStorage.setItem('mechanical-course:last',JSON.stringify({slug:D.slug,page:i+1,title:D.chapter}));}catch{}
     document.querySelectorAll('#gridBody figure').forEach(f=>f.classList.toggle('cur',+f.dataset.i===i));
 
-    preload(i + 1);
-    preload(i + 2);
   }
 
-  const preloaded = new Set();
-  function preload(i) {
-    if (i < 0 || i >= N || preloaded.has(i)) return;
-    preloaded.add(i);
-    const el = new Image();
-    el.src = S[i].img;
+  function loadState(state, message) {
+    stage.dataset.loadState = state;
+    stage.setAttribute('aria-busy', String(state==='loading'));
+    feedback.hidden = state==='ready';
+    $('loadMessage').textContent = message;
+    $('retryPage').hidden = state!=='error';
   }
+
+  async function showPage(index, version, signal) {
+    const slide = S[index];
+    const start = performance.now();
+    const hit = buffer.entries.has(index);
+    loadState('loading', '正在加载第 '+slide.n+' 页…');
+    for (let attempt=1; attempt<=3; attempt++) {
+      if (signal.aborted || version!==generation) return;
+      let entry;
+      try {
+        entry = await buffer.read(index, signal, true, true);
+      } catch {
+        if (signal.aborted || version!==generation) return;
+        stage.dataset.attempt = attempt;
+        if (attempt===3) {
+          loadState('error','第 '+slide.n+' 页加载失败');
+          return;
+        }
+        loadState('loading','第 '+slide.n+' 页加载失败，正在重试…');
+        await new Promise(resolve=>setTimeout(resolve,400 * 2**(attempt-1)));
+        continue;
+      }
+      if (signal.aborted || version!==generation) return;
+      const [base,...annotations] = entry.images;
+      base.id='slideImg';
+      base.draggable=false;
+      base.alt=$('slideImg').alt;
+      $('slideImg').replaceWith(base);
+      annotations.forEach((image,j)=>{
+        const c=slide.caps[j];
+        image.alt='';
+        Object.assign(image.style,{left:c.x+'%',top:c.y+'%',width:c.w+'%',height:c.h+'%',objectFit:'fill'});
+      });
+      caps.replaceChildren(...annotations);
+      for (const media of mediaOf(slide)) addMedia(media,version);
+      Object.assign(stage.dataset,{page:slide.n,bufferHit:hit,attempt,loadMs:Math.round(performance.now()-start)});
+      loadState('ready','');
+      buffer.warm(signal,()=>Array.from(ovl.querySelectorAll('video')).some(v=>!v.paused));
+      return;
+    }
+  }
+
+  $('retryPage').addEventListener('click',e=>{
+    e.stopPropagation();
+    render(cur,{force:true});
+  });
 
   function go(delta) {
     const next = Math.max(0, Math.min(N - 1, cur + delta));
@@ -447,7 +491,7 @@
   });
 
   window.addEventListener('resize', fit);
-  window.addEventListener('pagehide',releaseMedia);
+  window.addEventListener('pagehide',()=>{buffer.stop(); releaseMedia();});
   window.addEventListener('pageshow',e=>{if(e.persisted)render(cur,{force:true});});
   stage.addEventListener('touchcancel',()=>{gesture=null;suppressClick=Date.now()+700;},{passive:true});
   document.addEventListener('keydown',e=>{

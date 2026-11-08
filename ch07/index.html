@@ -46,6 +46,7 @@
     <div id="ovl"></div>
     <div id="caps"></div>
   </div>
+  <div id="loadFeedback" hidden><span role="status" id="loadMessage"></span><button id="retryPage" hidden>重新加载本页</button></div>
   <span class="gif-badge" id="gifBadge" hidden></span>
   <button class="tool fit-button" id="btnFit" title="恢复整页适应" aria-label="恢复整页适应">恢复适应</button>
   <div class="pager">
@@ -101,6 +102,7 @@
 <div id="toast" role="status" aria-live="polite"></div>
 
 <script src="assets/deck-data.js"></script>
+<script src="../reader/page-buffer.js"></script>
 <script src="../reader/app.js"></script>
 </body>
 </html>
