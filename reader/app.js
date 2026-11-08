@@ -68,9 +68,10 @@
 
   let zoom=1, panX=0, panY=0, suppressClick=0;
   function transform(){
-    const cs=getComputedStyle(wrap);
-    const aw=wrap.clientWidth-parseFloat(cs.paddingLeft)-parseFloat(cs.paddingRight);
-    const ah=wrap.clientHeight-parseFloat(cs.paddingTop)-parseFloat(cs.paddingBottom);
+    const host = stage.parentElement || wrap;
+    const cs=getComputedStyle(host);
+    const aw=host.clientWidth-parseFloat(cs.paddingLeft)-parseFloat(cs.paddingRight);
+    const ah=host.clientHeight-parseFloat(cs.paddingTop)-parseFloat(cs.paddingBottom);
     const bx=Math.max(0,(stage.offsetWidth*zoom-aw)/2),by=Math.max(0,(stage.offsetHeight*zoom-ah)/2);
     panX=Math.max(-bx,Math.min(bx,panX));panY=Math.max(-by,Math.min(by,panY));
     stage.style.transform=`translate(${panX}px,${panY}px) scale(${zoom})`;
@@ -79,12 +80,13 @@
   $('btnFit').addEventListener('click',resetView);
   /* ---------------- layout ---------------- */
   function fit() {
-    const cs = getComputedStyle(wrap);
+    const host = stage.parentElement || wrap;
+    const cs = getComputedStyle(host);
     const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
     const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
     const aspect = D.width / D.height;
-    const availW = wrap.clientWidth - padX;
-    const availH = wrap.clientHeight - padY;
+    const availW = host.clientWidth - padX;
+    const availH = host.clientHeight - padY;
     const w = Math.max(1, Math.min(availW, availH * aspect));
     const h = w / aspect;
     stage.style.width = Math.floor(w) + 'px';
@@ -509,6 +511,7 @@
   $('deckSub').textContent = D.subtitle || `${D.chapter} · 课件（含动态演示）`;
 
   fit();
+  window.__mmRefit = fit;
   const hash=location.hash.slice(1);
   let start=/^\d+$/.test(hash)?Number(hash):0;
   if(start<1||start>N){try{start=Number(localStorage.getItem(storageKey));}catch{}}
