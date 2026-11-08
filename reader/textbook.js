@@ -5,7 +5,10 @@
   const ME = document.currentScript;
   if (!ME) return;
   const SITE = new URL('../', ME.src);
-  const PDF_URL = new URL('assets/textbook/mechanical-manufacturing-basics.pdf', SITE).href;
+  const PDF_REVISION = 'c3f3213c173762a5';
+  const pdfURL = new URL('assets/textbook/mechanical-manufacturing-basics.pdf', SITE);
+  pdfURL.searchParams.set('v',PDF_REVISION);
+  const PDF_URL = pdfURL.href;
   const PDFJS = new URL('vendor/pdfjs/', SITE).href;
   const BOOK_TITLE = '机械制造技术基础教材';
   const BOOK_FILE = '机械制造技术基础教材.pdf';
@@ -46,13 +49,13 @@
       <span class="book-tools">
         <button class="book-btn" id="bookZoomOut" title="缩小" aria-label="缩小">−</button>
         <button class="book-btn" id="bookZoomIn" title="放大" aria-label="放大">+</button>
+        <button class="book-btn" id="bookFit" title="适应宽度" aria-label="教材适应宽度"><svg viewBox="0 0 24 24"><path d="M4 5v14M20 5v14M9 8l-4 4 4 4M15 8l4 4-4 4M5 12h14"/></svg></button>
         <a class="book-dl" id="bookDownload" href="${PDF_URL}" download="${BOOK_FILE}" title="下载教材 PDF">
           <svg viewBox="0 0 24 24"><path d="M12 4v10m0 0 4-4m-4 4-4-4M5 18h14"/></svg><span>下载</span>
         </a>
         <button class="book-btn" id="bookClose" title="关闭教材" aria-label="关闭教材">×</button>
       </span>
     </div>
-    <form class="book-search" id="bookSearchForm"><input id="bookQuery" type="search" placeholder="搜索教材文字" aria-label="搜索教材文字"><button class="book-btn" aria-label="查找下一处">查找</button><span id="bookSearchStatus" role="status"></span></form>
     <div class="book-scroll" id="bookScroll"><div class="book-pages-wrap" id="bookPages"></div></div>
     <div class="book-loading" id="bookLoading">
       <div class="ring"></div>
@@ -69,8 +72,8 @@
   btnBook.setAttribute('aria-label', '打开教材');
   btnBook.innerHTML =
     '<svg viewBox="0 0 24 24"><path d="M4 5h7v14H4zM13 5h7v14h-7z"/><path d="M11 5v14"/></svg><span>教材</span>';
-  const tools = document.querySelector('#bar .tools');
-  (tools || document.body).prepend(btnBook);
+  const home = document.querySelector('#bar .course-home');
+  home.after(btnBook);
 
   /* ---------------- 分屏状态 ---------------- */
   let open = false;
@@ -117,6 +120,7 @@
     open = next;
     applyLayout();
     if (open) book.ensure();
+    else book.suspend();
   }
 
   /* ---------------- 拖动 ---------------- */
@@ -174,7 +178,14 @@
     btnBook.focus();
   });
 
-  const layoutObserver = new ResizeObserver(() => applyLayout());
+  let layoutSize = '';
+  const layoutObserver = new ResizeObserver(entries => {
+    const rect = entries[0].contentRect;
+    const size = Math.round(rect.width) + 'x' + Math.round(rect.height);
+    if (size === layoutSize) return;
+    layoutSize = size;
+    applyLayout();
+  });
   layoutObserver.observe(host);
 
   /* ---------------- 教材阅读器 ---------------- */
@@ -183,13 +194,14 @@
     let loading = false;
     let failed = false;
     let total = 0;
-    let zoom = Math.min(2.4, Math.max(0.7, parseFloat(read(LS.zoom, '1')) || 1));
+    let zoom = Math.min(3.5, Math.max(0.7, parseFloat(read(LS.zoom, '1')) || 1));
     let current = 1;
     let observer = null;
     let revision = 0;
-    let searchRevision = 0;
+    let pinching = false;
+    let lastLayout = '';
+    let zoomFrame = 0;
     const tasks = new Map();
-    const text = new Map();
 
     const els = new Map();      // n -> element
     const done = new Map();     // n -> canvas
@@ -199,7 +211,10 @@
     const wrapEl = () => el('bookPages');
 
     function ensure() {
-      if (pdfDoc || loading) { if (pdfDoc) el('bookLoading').hidden = true; return; }
+      if (pdfDoc || loading) {
+        if (pdfDoc) { el('bookLoading').hidden = true; observe(); renderPage(current); }
+        return;
+      }
       load();
     }
 
@@ -217,11 +232,11 @@
       el('bookLoading').hidden = false;
       el('bookLoadingText').textContent = '正在打开教材…';
       try {
-        await loadScript(PDFJS + 'pdf.min.js');
+        if (!window.pdfjsLib) await loadScript(PDFJS + 'pdf.min.js');
         if (!window.pdfjsLib) throw new Error('pdf.js 不可用');
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.js';
 
-        const task = window.pdfjsLib.getDocument({url:PDF_URL,disableStream:true,disableAutoFetch:true,rangeChunkSize:65536});
+        const task = window.pdfjsLib.getDocument({url:PDF_URL});
         task.onProgress = (p) => {
           if (p && p.total) {
             const pct = Math.min(100, Math.round(p.loaded / p.total * 100));
@@ -261,7 +276,7 @@
 
     function baseWidth() {
       const w = scrollEl().clientWidth - 24;
-      return Math.max(220, w);
+      return Math.max(120, w);
     }
 
     function pageWidth() { return Math.round(baseWidth() * zoom); }
@@ -275,12 +290,12 @@
         const d = document.createElement('div');
         d.className = 'book-page';
         d.dataset.n = String(n);
-        d.style.width = pageWidth() + 'px';
         d.innerHTML = `<div class="ph">${n}</div>`;
         els.set(n, d);
         frag.append(d);
       }
       wrap.append(frag);
+      rescale();
       observe();
     }
 
@@ -298,7 +313,7 @@
     }
 
     async function renderPage(n) {
-      if (!pdfDoc || done.has(n)) return;
+      if (!pdfDoc || pinching || done.has(n)) return;
       const box = els.get(n);
       if (!box || box.dataset.busy === '1') return;
       box.dataset.busy = '1';
@@ -361,7 +376,7 @@
 
     let ticking = false;
     function onScroll() {
-      if (!total || ticking) return;
+      if (!total || ticking || pinching) return;
       ticking = true;
       requestAnimationFrame(() => {
         ticking = false;
@@ -380,24 +395,52 @@
       });
     }
 
-    function rescale() {
-      if (!total) return;
-      const w = pageWidth();
-      for (const box of els.values()) box.style.width = w + 'px';
+    function position() {
+      const scroll = scrollEl();
+      let page = 1;
+      for (const [n, box] of els) {
+        if (box.offsetTop > scroll.scrollTop) break;
+        page = n;
+      }
+      const box = els.get(page);
+      return {
+        page,
+        fraction: box ? (scroll.scrollTop - box.offsetTop) / box.offsetHeight : 0,
+        left: scroll.scrollLeft / Math.max(1, pageWidth()),
+      };
     }
 
-    function relayout() {
+    function restorePosition(anchor) {
+      const box = els.get(anchor.page);
+      if (!box) return;
+      scrollEl().scrollTop = box.offsetTop + anchor.fraction * box.offsetHeight;
+      scrollEl().scrollLeft = anchor.left * pageWidth();
+    }
+
+    function rescale() {
       if (!total) return;
+      const anchor = pinching ? null : position();
+      wrapEl().style.setProperty('--book-page-width', pageWidth() + 'px');
+      if (anchor) restorePosition(anchor);
+    }
+
+    function relayout(anchor = position()) {
+      if (!total || pinching) return;
+      const key = pageWidth() + ':' + scrollEl().clientHeight;
+      if (key === lastLayout) return;
+      lastLayout = key;
       revision++;
-      tasks.forEach(task => task.cancel()); tasks.clear();
-      els.forEach(box => box.dataset.busy='');
+      tasks.forEach(task => task.cancel());
+      tasks.clear();
+      els.forEach(box => box.dataset.busy = '');
       rescale();
-      for (const [n, c] of [...done]) {
-        c.remove(); c.width=c.height=0;
-        done.delete(n);
+      for (const [n, canvas] of done) {
+        canvas.remove();
+        canvas.width = canvas.height = 0;
         els.get(n)?.classList.remove('rendered');
       }
-      scrollEl().scrollTop=els.get(current).offsetTop;
+      done.clear();
+      restorePosition(anchor);
       observe();
       requestAnimationFrame(() => {
         renderPage(current);
@@ -405,11 +448,67 @@
       });
     }
 
+    function suspend() {
+      revision++;
+      tasks.forEach(task => task.cancel());
+      tasks.clear();
+      els.forEach(box => box.dataset.busy = '');
+    }
+
     function setZoom(next) {
-      zoom = Math.min(2.4, Math.max(0.7, next));
+      const anchor = position();
+      zoom = Math.min(3.5, Math.max(0.7, next));
       write(LS.zoom, zoom);
+      relayout(anchor);
+    }
+
+    const scroll = scrollEl();
+    let gesture = null;
+    scroll.addEventListener('touchstart', event => {
+      if (event.touches.length < 2 || !total) return;
+      event.preventDefault();
+      const [a, b] = event.touches;
+      const rect = scroll.getBoundingClientRect();
+      pinching = true;
+      revision++;
+      tasks.forEach(task => task.cancel());
+      tasks.clear();
+      els.forEach(box => box.dataset.busy = '');
+      gesture = {
+        distance: Math.max(1, Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY)),
+        zoom,
+        x: ((a.clientX+b.clientX)/2-rect.left+scroll.scrollLeft)/zoom,
+        y: ((a.clientY+b.clientY)/2-rect.top+scroll.scrollTop)/zoom,
+      };
+    }, {passive:false});
+    scroll.addEventListener('touchmove', event => {
+      if (!gesture || event.touches.length < 2) return;
+      event.preventDefault();
+      const [a, b] = event.touches;
+      const rect = scroll.getBoundingClientRect();
+      const next = Math.min(3.5, Math.max(.7,
+        gesture.zoom*Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY)/gesture.distance));
+      cancelAnimationFrame(zoomFrame);
+      zoomFrame = requestAnimationFrame(() => {
+        zoom = next;
+        rescale();
+        scroll.scrollLeft = gesture.x*zoom-((a.clientX+b.clientX)/2-rect.left);
+        scroll.scrollTop = gesture.y*zoom-((a.clientY+b.clientY)/2-rect.top);
+      });
+    }, {passive:false});
+    function finishPinch(event) {
+      if (!gesture || event.touches.length >= 2) return;
+      cancelAnimationFrame(zoomFrame);
+      gesture = null;
+      pinching = false;
+      write(LS.zoom,zoom);
+      // Canvas pixels are rerendered only after the gesture.
+      lastLayout = '';
       relayout();
     }
+    scroll.addEventListener('touchend', finishPinch);
+    scroll.addEventListener('touchcancel', finishPinch);
+    el('bookFit').addEventListener('click', () => setZoom(1));
 
     el('bookScroll').addEventListener('scroll', onScroll, { passive: true });
     el('bookZoomIn').addEventListener('click', () => setZoom(zoom * 1.2));
@@ -431,38 +530,7 @@
       if (e.key === 'PageUp') { e.preventDefault(); step(-1); }
     });
 
-    const normalize=value=>value.replace(/\s+/g,'').toLowerCase();
-    el('bookQuery').addEventListener('input',()=>{searchRevision++;el('bookSearchStatus').textContent='';});
-    el('bookSearchForm').addEventListener('submit',async event=>{
-      event.preventDefault();
-      if(!pdfDoc) return;
-      const query=normalize(el('bookQuery').value);
-      if(!query) return;
-      const token=++searchRevision;
-      const start=current;
-      el('bookSearchStatus').textContent='正在查找…';
-      try {
-        for(let offset=1;offset<=total;offset++) {
-          if(token!==searchRevision || !open) return;
-          const n=(start-1+offset)%total+1;
-          if(!text.has(n)) {
-            const page=await pdfDoc.getPage(n);
-            const content=await page.getTextContent();
-            text.set(n,normalize(content.items.map(item=>item.str).join('')));
-          }
-          if(token!==searchRevision) return;
-          if(text.get(n).includes(query)) {
-            gotoPage(n,true);
-            el('bookSearchStatus').textContent='命中第 '+n+' 页';
-            return;
-          }
-          await new Promise(resolve=>setTimeout(resolve,0));
-        }
-        el('bookSearchStatus').textContent='未找到';
-      } catch {el('bookSearchStatus').textContent='搜索失败，可重试';}
-    });
-
-    return { ensure, relayout, rescale, gotoPage, step, get total() { return total; }, get failed() { return failed; } };
+    return { ensure, relayout, rescale, gotoPage, step, suspend, get total() { return total; }, get failed() { return failed; } };
   })();
 
   /* ---------------- 启动 ---------------- */

@@ -160,10 +160,6 @@ html[data-theme="day"] .book-dl:hover{background:rgba(208,32,42,.16);color:#7a10
 .book-only #bookClose{display:none}
 .book-pages-wrap{position:relative;align-items:flex-start;min-width:100%;width:max-content}
 .book-page{max-width:none;flex:none;margin:0 auto}
-.book-search{display:flex;align-items:center;gap:6px;padding:4px 10px;background:var(--book-bar)}
-.book-search input{min-width:0;flex:1;background:var(--panel-2);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:7px;font:inherit;font-size:12px}
-.book-search button{width:44px;font-size:12px}
-#bookSearchStatus{font-size:11px;color:var(--mut)}
 .book-btn,.book-dl,.book-pages input{min-height:40px}
 #btnSwap{opacity:1;width:30px;height:30px;flex-shrink:0}
 .book-loading{inset:86px 0 0}
@@ -171,4 +167,13 @@ body.notes-open #stageWrap.has-book{padding-right:0}
 body.notes-open #stageWrap.has-book .pager{--shift:0px}
 @media(max-width:760px){#stageWrap.has-book>#paneSlides{padding:8px 8px calc(90px + env(safe-area-inset-bottom))}#bar .tools .tool{min-width:40px;padding:6px}#bar .brand{flex-shrink:0}.book-title{font-size:11px}.book-bar{gap:3px}.book-dl{padding:0 6px}}
 @media(max-height:500px) and (orientation:landscape){#stageWrap.has-book>#paneSlides{padding:4px 8px calc(68px + env(safe-area-inset-bottom))}}
-@media(max-width:420px){#bar .brand{display:none}.book-title{max-width:115px}#bookSearchStatus{max-width:100px}.book-bar{padding:0 5px}.book-btn{width:30px}}
+
+/* Reader improvements: scoped gestures. */
+.book-page{width:var(--book-page-width,100%)}
+.book-scroll{touch-action:pan-x pan-y}
+.book-pages-wrap{touch-action:pan-x pan-y}
+.book-only #bar{justify-content:flex-start}
+@media(max-width:420px){.book-title{max-width:80px}.book-dl{padding:0 5px}.book-pages input{width:34px}.book-tools{gap:0}}
+
+.book-loading{inset:44px 0 0}
+.book-err{inset:44px 0 0}
