@@ -10,6 +10,7 @@
   const BOOK_TITLE = '机械制造技术基础教材';
   const BOOK_FILE = '机械制造技术基础教材.pdf';
 
+  const standalone = document.body.classList.contains('book-only');
   const host = document.getElementById('stageWrap');
   if (!host || document.getElementById('paneBook')) return;
 
@@ -48,9 +49,10 @@
         <a class="book-dl" id="bookDownload" href="${PDF_URL}" download="${BOOK_FILE}" title="下载教材 PDF">
           <svg viewBox="0 0 24 24"><path d="M12 4v10m0 0 4-4m-4 4-4-4M5 18h14"/></svg><span>下载</span>
         </a>
-        <button class="book-btn" id="bookClose" title="关闭教材（Esc）" aria-label="关闭教材">×</button>
+        <button class="book-btn" id="bookClose" title="关闭教材" aria-label="关闭教材">×</button>
       </span>
     </div>
+    <form class="book-search" id="bookSearchForm"><input id="bookQuery" type="search" placeholder="搜索教材文字" aria-label="搜索教材文字"><button class="book-btn" aria-label="查找下一处">查找</button><span id="bookSearchStatus" role="status"></span></form>
     <div class="book-scroll" id="bookScroll"><div class="book-pages-wrap" id="bookPages"></div></div>
     <div class="book-loading" id="bookLoading">
       <div class="ring"></div>
@@ -86,12 +88,14 @@
 
   function applyLayout() {
     const vertical = open && isVertical();
+    host.classList.toggle('standalone', standalone);
     ratio = ratioFor(vertical);
     host.classList.toggle('split', open);
     host.classList.toggle('v', vertical);
     pane.hidden = !open;
     splitter.hidden = !open;
     host.style.setProperty('--split-a', ratio + '%');
+    host.style.setProperty('--split-ratio',ratio/100);
     splitter.style.setProperty('--split-a', ratio + '%');
     paneSlides.style.order = swapped ? 3 : 1;
     splitter.style.order = 2;
@@ -108,6 +112,7 @@
   }
 
   function setOpen(next) {
+    if (standalone) next = true;
     if (next === open) return;
     open = next;
     applyLayout();
@@ -115,21 +120,19 @@
   }
 
   /* ---------------- 拖动 ---------------- */
-  let dragMoved = false;
   splitter.addEventListener('pointerdown', (e) => {
     if (e.target.closest('#btnSwap')) return;
     e.preventDefault();
-    dragMoved = false;
     splitter.setPointerCapture(e.pointerId);
     splitter.classList.add('dragging');
     const vertical = host.classList.contains('v');
 
     const move = (ev) => {
-      dragMoved = true;
       const r = host.getBoundingClientRect();
       const raw = vertical ? (ev.clientY - r.top) / r.height * 100 : (ev.clientX - r.left) / r.width * 100;
       ratio = Math.round(Math.max(vertical ? 25 : 20, Math.min(80, raw)));
       host.style.setProperty('--split-a', ratio + '%');
+    host.style.setProperty('--split-ratio',ratio/100);
       book.rescale();
       refit();
     };
@@ -149,8 +152,9 @@
 
   splitter.addEventListener('dblclick', () => {
     const vertical = host.classList.contains('v');
-    ratio = vertical ? 52 : 50;
+    ratio = 50;
     host.style.setProperty('--split-a', ratio + '%');
+    host.style.setProperty('--split-ratio',ratio/100);
     ratios[vertical ? 'v' : 'h'] = ratio;
     write(LS.split, JSON.stringify(ratios));
     book.relayout();
@@ -170,11 +174,8 @@
     btnBook.focus();
   });
 
-  addEventListener('resize', () => {
-    if (!open) { refit(); return; }
-    host.classList.toggle('v', isVertical());
-    applyLayout();
-  });
+  const layoutObserver = new ResizeObserver(() => applyLayout());
+  layoutObserver.observe(host);
 
   /* ---------------- 教材阅读器 ---------------- */
   const book = (() => {
@@ -185,6 +186,10 @@
     let zoom = Math.min(2.4, Math.max(0.7, parseFloat(read(LS.zoom, '1')) || 1));
     let current = 1;
     let observer = null;
+    let revision = 0;
+    let searchRevision = 0;
+    const tasks = new Map();
+    const text = new Map();
 
     const els = new Map();      // n -> element
     const done = new Map();     // n -> canvas
@@ -216,7 +221,7 @@
         if (!window.pdfjsLib) throw new Error('pdf.js 不可用');
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.js';
 
-        const task = window.pdfjsLib.getDocument({ url: PDF_URL });
+        const task = window.pdfjsLib.getDocument({url:PDF_URL,disableStream:true,disableAutoFetch:true,rangeChunkSize:65536});
         task.onProgress = (p) => {
           if (p && p.total) {
             const pct = Math.min(100, Math.round(p.loaded / p.total * 100));
@@ -230,6 +235,8 @@
         el('bookLoadingText').textContent = '正在排版…';
         build();
         el('bookLoading').hidden = true;
+        failed = false;
+        pane.querySelectorAll('.book-err').forEach(box => box.remove());
         const saved = parseInt(read(LS.page, '1'), 10);
         gotoPage(saved > 0 && saved <= total ? saved : 1, true);
       } catch (err) {
@@ -242,6 +249,7 @@
 
     function showError(err) {
       el('bookLoading').hidden = true;
+      pane.querySelectorAll('.book-err').forEach(box => box.remove());
       const box = document.createElement('div');
       box.className = 'book-err';
       box.innerHTML =
@@ -294,9 +302,12 @@
       const box = els.get(n);
       if (!box || box.dataset.busy === '1') return;
       box.dataset.busy = '1';
+      const version = revision;
       try {
         const page = await pdfDoc.getPage(n);
+        if(version !== revision || !open) return;
         const base = page.getViewport({ scale: 1 });
+        box.style.aspectRatio = base.width + '/' + base.height;
         const cssW = box.clientWidth || 600;
         const dpr = Math.min(2, window.devicePixelRatio || 1);
         const vp = page.getViewport({ scale: (cssW * dpr) / base.width });
@@ -304,21 +315,25 @@
         canvas.width = Math.floor(vp.width);
         canvas.height = Math.floor(vp.height);
         const ctx = canvas.getContext('2d', { alpha: false });
-        await page.render({ canvasContext: ctx, viewport: vp }).promise;
+        const task = page.render({canvasContext:ctx,viewport:vp});
+        tasks.set(n,task);
+        await task.promise;
+        if(version !== revision || !open) { canvas.width=canvas.height=0; return; }
         box.append(canvas);
         box.classList.add('rendered');
         done.set(n, canvas);
+        trim();
       } catch (_) {
         /* 单页失败不影响其它页 */
       }
-      box.dataset.busy = '';
+      if(version === revision) { box.dataset.busy = ''; tasks.delete(n); }
     }
 
     function trim() {
       if (done.size <= 10) return;
       for (const [n, c] of [...done]) {
         if (Math.abs(n - current) > 7) {
-          c.remove();
+          c.remove(); c.width=c.height=0;
           done.delete(n);
           els.get(n)?.classList.remove('rendered');
         }
@@ -332,9 +347,10 @@
       current = n;
       el('bookPageInput').value = n;
       write(LS.page, n);
-      scrollEl().scrollTo({ top: Math.max(0, box.offsetTop - 14), behavior: instant ? 'auto' : 'smooth' });
+      scrollEl().scrollTo({top:Math.max(0,box.offsetTop),behavior:'auto'});
       renderPage(n);
       renderPage(n + 1);
+      trim();
     }
 
     function step(delta) {
@@ -372,12 +388,17 @@
 
     function relayout() {
       if (!total) return;
+      revision++;
+      tasks.forEach(task => task.cancel()); tasks.clear();
+      els.forEach(box => box.dataset.busy='');
       rescale();
       for (const [n, c] of [...done]) {
-        c.remove();
+        c.remove(); c.width=c.height=0;
         done.delete(n);
         els.get(n)?.classList.remove('rendered');
       }
+      scrollEl().scrollTop=els.get(current).offsetTop;
+      observe();
       requestAnimationFrame(() => {
         renderPage(current);
         renderPage(current + 1);
@@ -403,9 +424,42 @@
     el('bookPageInput').addEventListener('blur', (e) => {
       e.target.value = current;
     });
-    scrollEl().addEventListener('keydown', (e) => {
+    pane.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if(e.target.matches('input')) return;
       if (e.key === 'PageDown') { e.preventDefault(); step(1); }
       if (e.key === 'PageUp') { e.preventDefault(); step(-1); }
+    });
+
+    const normalize=value=>value.replace(/\s+/g,'').toLowerCase();
+    el('bookQuery').addEventListener('input',()=>{searchRevision++;el('bookSearchStatus').textContent='';});
+    el('bookSearchForm').addEventListener('submit',async event=>{
+      event.preventDefault();
+      if(!pdfDoc) return;
+      const query=normalize(el('bookQuery').value);
+      if(!query) return;
+      const token=++searchRevision;
+      const start=current;
+      el('bookSearchStatus').textContent='正在查找…';
+      try {
+        for(let offset=1;offset<=total;offset++) {
+          if(token!==searchRevision || !open) return;
+          const n=(start-1+offset)%total+1;
+          if(!text.has(n)) {
+            const page=await pdfDoc.getPage(n);
+            const content=await page.getTextContent();
+            text.set(n,normalize(content.items.map(item=>item.str).join('')));
+          }
+          if(token!==searchRevision) return;
+          if(text.get(n).includes(query)) {
+            gotoPage(n,true);
+            el('bookSearchStatus').textContent='命中第 '+n+' 页';
+            return;
+          }
+          await new Promise(resolve=>setTimeout(resolve,0));
+        }
+        el('bookSearchStatus').textContent='未找到';
+      } catch {el('bookSearchStatus').textContent='搜索失败，可重试';}
     });
 
     return { ensure, relayout, rescale, gotoPage, step, get total() { return total; }, get failed() { return failed; } };
@@ -415,7 +469,7 @@
   applyLayout();
 
   const params = new URLSearchParams(location.search);
-  if (params.get('book') === '1') {
+  if (standalone || params.get('book') === '1') {
     setOpen(true);
   }
 

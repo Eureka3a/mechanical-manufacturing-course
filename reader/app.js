@@ -512,7 +512,6 @@
 
   fit();
   window.__mmRefit = fit;
-  addEventListener('resize', fit);
   const hash=location.hash.slice(1);
   let start=/^\d+$/.test(hash)?Number(hash):0;
   if(start<1||start>N){try{start=Number(localStorage.getItem(storageKey));}catch{}}
